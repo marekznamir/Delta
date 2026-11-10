@@ -5,6 +5,8 @@
 #include <filesystem>
 #include <cstdint>
 #include <memory>
+#include <chrono>
+#include <cstdio>
 
 #include "TrackSession.hpp"
 
@@ -97,9 +99,30 @@ int main()
     TrackSession track_session;
     track_session.start();
 
-    for(std::size_t i{}; i < num_of_elements; i++)
+    auto start_time = std::chrono::steady_clock::now();
+    uint32_t start_iTOW = buf[0].pvt.iTOW;
+
+    std::size_t i{};
+    while(i < num_of_elements)
     {
-        track_session.processData(buf[i].pvt.lat, buf[i].pvt.lon, buf[i].pvt.height, buf[i].pvt.velN, buf[i].pvt.velE, buf[i].pvt.headMot);
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - start_time).count();
+
+        if(elapsed_ms >= static_cast<int64_t>(buf[i].pvt.iTOW - start_iTOW))
+        {
+            while (i < num_of_elements && elapsed_ms >= static_cast<int64_t>(buf[i].pvt.iTOW - start_iTOW))
+            {
+                track_session.processData(buf[i].pvt.lat, buf[i].pvt.lon, buf[i].pvt.height, buf[i].pvt.velN, buf[i].pvt.velE, buf[i].pvt.headMot);
+                i++;
+            }
+
+            // std::cout << "\x1B[2J\x1B[H";
+            // std::cout << "Delta [ms]: " << (static_cast<double>(track_session.getDelta()) / 1000.0) << std::endl;
+            // std::cout << "Elapsed time [s]: " << elapsed_ms / 1000 << std::endl;
+            printf("\x1B[2J\x1B[H");
+            printf("Delta [ms]: %f \n", (static_cast<double>(track_session.getDelta()) / 1000.0));
+            printf("Elapsed time [s]: %d \n", elapsed_ms / 1000);
+        }
     }
 
     return 0;
