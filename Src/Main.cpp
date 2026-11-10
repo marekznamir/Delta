@@ -6,6 +6,8 @@
 #include <cstdint>
 #include <memory>
 
+#include "TrackSession.hpp"
+
 union UBX_NAV_PVT {
     struct PVT {
         uint32_t iTOW;          // [ms] GPS time of week of the navigation epoch
@@ -92,9 +94,12 @@ int main()
 
     file.read(reinterpret_cast<char*>(buf.get()->data), file_size);
 
+    TrackSession track_session;
+    track_session.start();
+
     for(std::size_t i{}; i < num_of_elements; i++)
     {
-        std::cout << buf[i].pvt.lat << " " << buf[i].pvt.lon << std::endl;
+        track_session.processData(buf[i].pvt.lat, buf[i].pvt.lon, buf[i].pvt.height, buf[i].pvt.velN, buf[i].pvt.velE, buf[i].pvt.headMot);
     }
 
     return 0;
