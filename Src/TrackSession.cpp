@@ -56,29 +56,44 @@ std::pair<int32_t, int32_t> TrackSession::gpstoxy(int32_t& lat, int32_t& lon)
 
 Point TrackSession::findStartFinishPoint() // temporary ai slop, to verify
 {
-    if (ref_lap.size < 20) {
+    if (ref_lap.size < 2) {
         return ref_lap.size > 0 ? ref_lap.data[0] : Point{0, 0, 0};
     }
-    constexpr std::size_t STEP = 5;        // krok wygladzajacy szum GPS
-    constexpr int64_t TAN_INV = 8;         // ~7 stopni tolerancji kata (1/8 = 0.125)
-    constexpr int64_t MAX_DEV_MM = 4000;   // maks. odchylenie od osi prostej [4 m]
+    constexpr int64_t STEP_DIST_MM = 5000;                      // krok geometryczny [5 m] wygladzajacy szum GPS
+    constexpr int64_t STEP_DIST_SQ = STEP_DIST_MM * STEP_DIST_MM;
+    constexpr int64_t TAN_INV = 8;                              // ~7 stopni tolerancji kata (1/8 = 0.125)
+    constexpr int64_t MAX_DEV_MM = 4000;                        // maks. odchylenie od osi prostej [4 m]
     const std::size_t N = ref_lap.size;
     std::size_t best_start = 0;
     std::size_t best_end = 0;
     int64_t max_len_sq = -1;
-    // Przeszukujemy petle (z uwzglednieniem zawiniecia na koncu tablicy)
-    for (std::size_t i = 0; i < N; i += STEP)
+
+    auto advanceByStep = [&](std::size_t from_idx, std::size_t limit_idx) -> std::size_t {
+        std::size_t next_idx = from_idx + 1;
+        while (next_idx < limit_idx &&
+               hypotsqrd(ref_lap.data[from_idx % N], ref_lap.data[next_idx % N]) < STEP_DIST_SQ)
+        {
+            next_idx++;
+        }
+        return next_idx;
+    };
+
+    // Przeszukujemy petle krokiem geometrycznym (z uwzglednieniem zawiniecia na koncu tablicy)
+    for (std::size_t i = 0; i < N; i = advanceByStep(i, N))
     {
-        std::size_t j = i + STEP;
-        while (j - i < N)
+        const std::size_t limit = i + N;
+        std::size_t prev_j = i;
+        std::size_t j = advanceByStep(prev_j, limit);
+
+        while (j < limit)
         {
             const Point& p_start = ref_lap.data[i];
-            const Point& p_prev  = ref_lap.data[(j - STEP) % N];
+            const Point& p_prev  = ref_lap.data[prev_j % N];
             const Point& p_curr  = ref_lap.data[j % N];
             // Wektor calej prostej V = P_curr - P_start
             int64_t vx = static_cast<int64_t>(p_curr.x) - p_start.x;
             int64_t vy = static_cast<int64_t>(p_curr.y) - p_start.y;
-            // Wektor ostatniego kroku dv = P_curr - P_prev
+            // Wektor ostatniego kroku geometrycznego dv = P_curr - P_prev
             int64_t dvx = static_cast<int64_t>(p_curr.x) - p_prev.x;
             int64_t dvy = static_cast<int64_t>(p_curr.y) - p_prev.y;
             int64_t dot   = dvx * vx + dvy * vy;
@@ -104,7 +119,8 @@ Point TrackSession::findStartFinishPoint() // temporary ai slop, to verify
                 best_start = i;
                 best_end = j;
             }
-            j += STEP;
+            prev_j = j;
+            j = advanceByStep(prev_j, limit);
         }
     }
     const Point& A = ref_lap.data[best_start % N];
