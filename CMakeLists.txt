@@ -17,17 +17,11 @@ set(SOURCES
 
 if(STM32H7A3xx)
     add_library(Delta STATIC ${SOURCES})
+
+    target_include_directories(Delta PUBLIC Inc)
+    
+    target_link_libraries(Delta PRIVATE stm32cubemx)
 elseif(WIN32)
     add_executable(Delta ${SOURCES})
 endif()
-
-if(TARGET Delta)
-    target_include_directories(Delta
-        PUBLIC
-            ${CMAKE_CURRENT_SOURCE_DIR}/Inc
-        PRIVATE
-            ${CMAKE_CURRENT_SOURCE_DIR}/Src
-    )
-endif()
-
 
