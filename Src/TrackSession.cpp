@@ -138,10 +138,10 @@ void TrackSession::findFirstPos(int32_t& lat, int32_t& lon, int32_t& height, int
     startTimer();
 }
 
+static std::size_t guard_idx = 0;
+
 void TrackSession::learning(int32_t& lat, int32_t& lon, int32_t& height, int32_t& velN, int32_t& velE, int32_t& headMot)
 {
-    static std::size_t guard_idx = 0;
-
     if(guard_idx < MAX_CORDS_SIZE)
     {
         #ifdef __WIN32
@@ -309,6 +309,8 @@ void TrackSession::start()
     curr_lap.data = curr_buf;
 
     delta = 0;
+
+    guard_idx = 0;
 }
 
 void TrackSession::processData(int32_t& lat, int32_t& lon, int32_t& height, int32_t& velN, int32_t& velE, int32_t& headMot)
