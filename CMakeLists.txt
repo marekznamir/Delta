@@ -30,18 +30,4 @@ if(TARGET Delta)
     )
 endif()
 
-if(CMAKE_EXPORT_COMPILE_COMMANDS AND CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
-    add_custom_target(copy_compile_commands ALL
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_BINARY_DIR}/compile_commands.json"
-            "${CMAKE_CURRENT_SOURCE_DIR}/out/compile_commands.json"
-        BYPRODUCTS "${CMAKE_CURRENT_SOURCE_DIR}/out/compile_commands.json"
-        COMMENT "Updating out/compile_commands.json"
-    )
-    if(TARGET Delta)
-        add_dependencies(Delta copy_compile_commands)
-    endif()
-endif()
-
-
 
