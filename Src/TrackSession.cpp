@@ -125,6 +125,7 @@ Point TrackSession::findStartFinishPoint() // temporary ai slop, to verify
     }
 
     sf.t = ref_lap.data[best_k].t;
+    sf.headMot = ref_lap.data[best_k].headMot;
     return sf;
 }
 
@@ -138,11 +139,9 @@ void TrackSession::findFirstPos(int32_t& lat, int32_t& lon, int32_t& height, int
     startTimer();
 }
 
-static std::size_t guard_idx = 0;
-
 void TrackSession::learning(int32_t& lat, int32_t& lon, int32_t& height, int32_t& velN, int32_t& velE, int32_t& headMot)
 {
-    if(guard_idx < MAX_CORDS_SIZE)
+    if (ref_lap.size < MAX_CORDS_SIZE)
     {
         #ifdef __WIN32
 
@@ -157,50 +156,50 @@ void TrackSession::learning(int32_t& lat, int32_t& lon, int32_t& height, int32_t
         #endif
 
         auto [x, y] = gpstoxy(lat, lon);
-        ref_lap.push_back(Point(x, y, t));
-        guard_idx++;
+        ref_lap.push_back(Point(x, y, t, headMot));
     }
 
-    #ifdef __WIN32
-
-    constexpr std::size_t READINGS_SKIP = 180 * 100; // how many reading to skip during finding loop, currently for test data
-    
-    #elif STM32H7A3xx
-
-    constexpr std::size_t READINGS_SKIP = 10 * 20; // gps module f is 10hz
-
-    #endif
-
-    if (ref_lap.size > READINGS_SKIP)
+    if (ref_lap.size < 2)
     {
-        std::size_t loop_size = (ref_lap.size - READINGS_SKIP);
-        for (std::size_t i{}; i < loop_size; i++)
+        return;
+    }
+
+    auto& curr_point = ref_lap.data[ref_lap.size - 1];
+
+    constexpr int64_t MIN_DEPARTURE_DIST_MM = 20000; // 20 m
+    constexpr int64_t MIN_DEPARTURE_DIST_SQ = MIN_DEPARTURE_DIST_MM * MIN_DEPARTURE_DIST_MM;
+
+    std::size_t search_limit = ref_lap.size - 1;
+    while (search_limit > 0 && hypotsqrd(curr_point, ref_lap.data[search_limit]) <= MIN_DEPARTURE_DIST_SQ)
+    {
+        search_limit--;
+    }
+
+    for (std::size_t i = 0; i < search_limit; i++)
+    {
+        if (curr_point.inRange(ref_lap.data[i]) && curr_point.isSameDirection(ref_lap.data[i]))
         {
-            auto& curr_point = ref_lap.data[guard_idx - 1];
-            if (curr_point.inRange(ref_lap.data[i]))
+            session_state = SessionState::NORMAL;
+
+            start_finish_point = findStartFinishPoint();
+
+            std::size_t sf_idx = 0;
+            while (sf_idx < ref_lap.size && ref_lap.data[sf_idx].t < start_finish_point.t)
             {
-                session_state = SessionState::NORMAL;
-
-                start_finish_point = findStartFinishPoint();
-
-                std::size_t sf_idx = 0;
-                while (sf_idx < ref_lap.size && ref_lap.data[sf_idx].t < start_finish_point.t)
-                {
-                    sf_idx++;
-                }
-
-                std::size_t new_size = ref_lap.size - sf_idx;
-                for (std::size_t j = 0; j < new_size; j++)
-                {
-                    ref_lap.data[j] = ref_lap.data[sf_idx + j];
-                    ref_lap.data[j].t -= start_finish_point.t;
-                }
-                ref_lap.size = new_size;
-                curr_lap.size = 0;
-                waiting_first_cross = true;
-
-                break;
+                sf_idx++;
             }
+
+            std::size_t new_size = ref_lap.size - sf_idx;
+            for (std::size_t j = 0; j < new_size; j++)
+            {
+                ref_lap.data[j] = ref_lap.data[sf_idx + j];
+                ref_lap.data[j].t -= start_finish_point.t;
+            }
+            ref_lap.size = new_size;
+            curr_lap.size = 0;
+            waiting_first_cross = true;
+
+            break;
         }
     }
 }
@@ -220,7 +219,7 @@ void TrackSession::normal(int32_t& lat, int32_t& lon, int32_t& height, int32_t& 
     #endif
 
     auto [x, y] = gpstoxy(lat, lon);
-    Point curr_point(x, y, t);
+    Point curr_point(x, y, t, headMot);
     bool curr_in_range = curr_point.inRange(start_finish_point);
 
     if (waiting_first_cross)
@@ -232,11 +231,11 @@ void TrackSession::normal(int32_t& lat, int32_t& lon, int32_t& height, int32_t& 
             fastest_lap = t - start_finish_point.t;
             curr_lap.size = 0;
             resetTimer();
-            curr_lap.push_back(Point(x, y, 0));
+            curr_lap.push_back(Point(x, y, 0, headMot));
             return;
         }
 
-        ref_lap.push_back(Point(x, y, t - start_finish_point.t));
+        ref_lap.push_back(Point(x, y, t - start_finish_point.t, headMot));
         return;
     }
 
@@ -307,10 +306,10 @@ void TrackSession::start()
 
     ref_lap.data = ref_buf;
     curr_lap.data = curr_buf;
+    ref_lap.size = 0;
+    curr_lap.size = 0;
 
     delta = 0;
-
-    guard_idx = 0;
 }
 
 void TrackSession::processData(int32_t& lat, int32_t& lon, int32_t& height, int32_t& velN, int32_t& velE, int32_t& headMot)

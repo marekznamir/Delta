@@ -4,11 +4,13 @@ struct Point {
     int32_t x;
     int32_t y;
     uint32_t t;
+    int32_t headMot;
 
     Point() = default;
-    Point(int32_t _x, int32_t _y, uint32_t _t);
+    Point(int32_t _x, int32_t _y, uint32_t _t, int32_t _headMot = 0);
 
     bool inRange(Point& other);
+    bool isSameDirection(const Point& other) const;
 };
 
 int64_t hypotsqrd(Point& a, Point& b);
@@ -30,5 +32,3 @@ struct Cords {
     void push_back(Point& Point);
     void push_back(Point Point);
 };
-
-
