@@ -20,6 +20,7 @@ private:
     Point start_finish_point;
     int32_t delta;
     uint32_t fastest_lap = UINT32_MAX;
+    uint32_t moving_samples_count = 0;
     bool waiting_first_cross = false;
     bool is_crossing_startfinishpoint = false;
 
@@ -38,7 +39,8 @@ private:
 public:
     void start();
 
-    void processData(int32_t& lat, int32_t& lon, int32_t& height, int32_t& velN, int32_t& velE, int32_t& headMot);   
+    void processData(int32_t& lat, int32_t& lon, int32_t& height, int32_t& velN, int32_t& velE, int32_t& headMot,
+                     uint8_t fixType = 3, bool gnssFixOK = true, uint32_t sAcc = 0);   
 
     int32_t getDelta();
 };

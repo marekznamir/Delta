@@ -147,6 +147,13 @@ Point TrackSession::findStartFinishPoint() // temporary ai slop, to verify
 
 void TrackSession::findFirstPos(int32_t& lat, int32_t& lon, int32_t& height, int32_t& velN, int32_t& velE, int32_t& headMot)
 {
+    constexpr uint32_t MIN_MOVING_SAMPLES = 5;
+    moving_samples_count++;
+    if (moving_samples_count < MIN_MOVING_SAMPLES)
+    {
+        return;
+    }
+
     lon0 = static_cast<int64_t>(lon);
     lat0 = static_cast<int64_t>(lat);
     double lat0_rad = (static_cast<double>(lat0) / 10000000.0) * (M_PI / 180.0);
@@ -324,14 +331,27 @@ void TrackSession::start()
     curr_lap.data = curr_buf;
     ref_lap.size = 0;
     curr_lap.size = 0;
+    moving_samples_count = 0;
 
     delta = 0;
 }
 
-void TrackSession::processData(int32_t& lat, int32_t& lon, int32_t& height, int32_t& velN, int32_t& velE, int32_t& headMot)
+void TrackSession::processData(int32_t& lat, int32_t& lon, int32_t& height, int32_t& velN, int32_t& velE, int32_t& headMot,
+                               uint8_t fixType, bool gnssFixOK, uint32_t sAcc)
 {
+    constexpr uint32_t MAX_SPEED_ACC_MM_S = 400; // [mm/s] (~1.44 km/h)
+    if (!gnssFixOK || fixType < 3 || sAcc > MAX_SPEED_ACC_MM_S)
+    {
+        moving_samples_count = 0;
+        return;
+    }
+
     constexpr int64_t VEL_LIMIT = 555LL * 555LL; // [mm/s]
-    if((static_cast<int64_t>(velN) * static_cast<int64_t>(velN)) + (static_cast<int64_t>(velE) * static_cast<int64_t>(velE)) < VEL_LIMIT) { return; } // below 2 km/h not analysing anything
+    if((static_cast<int64_t>(velN) * static_cast<int64_t>(velN)) + (static_cast<int64_t>(velE) * static_cast<int64_t>(velE)) < VEL_LIMIT)
+    {
+        moving_samples_count = 0;
+        return; // below 2 km/h not analysing anything
+    }
 
     switch(session_state)
     {
