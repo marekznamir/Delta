@@ -112,13 +112,20 @@ int main()
         {
             while (i < num_of_elements && elapsed_ms >= static_cast<int64_t>(buf[i].pvt.iTOW - start_iTOW))
             {
-                track_session.processData(buf[i].pvt.lat, buf[i].pvt.lon, buf[i].pvt.height, buf[i].pvt.velN, buf[i].pvt.velE, buf[i].pvt.headMot);
+                track_session.processData(
+                    buf[i].pvt.lat,
+                    buf[i].pvt.lon,
+                    buf[i].pvt.height,
+                    buf[i].pvt.velN,
+                    buf[i].pvt.velE,
+                    buf[i].pvt.headMot,
+                    buf[i].pvt.fixType,
+                    buf[i].pvt.gnssFixOK && !buf[i].pvt.invalidLlh,
+                    buf[i].pvt.sAcc
+                );
                 i++;
             }
 
-            // std::cout << "\x1B[2J\x1B[H";
-            // std::cout << "Delta [ms]: " << (static_cast<double>(track_session.getDelta()) / 1000.0) << std::endl;
-            // std::cout << "Elapsed time [s]: " << elapsed_ms / 1000 << std::endl;
             printf("\x1B[2J\x1B[H");
             printf("Delta [ms]: %f \n", (static_cast<double>(track_session.getDelta()) / 1000.0));
             printf("Elapsed time [s]: %d \n", elapsed_ms / 1000);

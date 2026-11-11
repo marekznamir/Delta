@@ -15,13 +15,14 @@ set(SOURCES
     ${DISPLAY_SOURCES}
 )
 
-if(STM32H7A3xx)
+if(STM32H7A3xx OR TARGET stm32cubemx OR CMAKE_CROSSCOMPILING)
     add_library(Delta STATIC ${SOURCES})
 
-    target_include_directories(Delta PUBLIC Inc)
-    
+    target_include_directories(Delta PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/Inc)
+
     target_link_libraries(Delta PRIVATE stm32cubemx)
 elseif(WIN32)
     add_executable(Delta ${SOURCES})
-endif()
 
+    target_include_directories(Delta PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/Inc)
+endif()
