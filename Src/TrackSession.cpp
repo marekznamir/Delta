@@ -31,15 +31,15 @@ void TrackSession::startTimer()
     #endif
 }
 
-void TrackSession::resetTimer()
+void TrackSession::resetTimer(uint32_t offset_ms)
 {
     #ifdef __WIN32
 
-    start_time = std::chrono::high_resolution_clock::now();
+    start_time = std::chrono::high_resolution_clock::now() - std::chrono::milliseconds(offset_ms);
 
     #elif STM32H7A3xx
 
-    start_time = xTaskGetTickCount();
+    start_time = xTaskGetTickCount() - pdMS_TO_TICKS(offset_ms);
 
     #endif
 }
@@ -57,6 +57,8 @@ std::pair<int32_t, int32_t> TrackSession::gpstoxy(int32_t& lat, int32_t& lon)
 Point TrackSession::findStartFinishPoint() // temporary ai slop, to verify
 {
     if (ref_lap.size < 2) {
+        sf_dir_x = 0;
+        sf_dir_y = 0;
         return ref_lap.size > 0 ? ref_lap.data[0] : Point{0, 0, 0};
     }
     constexpr int64_t STEP_DIST_MM = 5000;                      // krok geometryczny [5 m] wygladzajacy szum GPS
@@ -125,18 +127,42 @@ Point TrackSession::findStartFinishPoint() // temporary ai slop, to verify
     }
     const Point& A = ref_lap.data[best_start % N];
     const Point& B = ref_lap.data[best_end % N];
+    sf_dir_x = static_cast<int64_t>(B.x) - A.x;
+    sf_dir_y = static_cast<int64_t>(B.y) - A.y;
+    if (sf_dir_x == 0 && sf_dir_y == 0)
+    {
+        const Point& next_pt = ref_lap.data[(best_start + 1) % N];
+        sf_dir_x = static_cast<int64_t>(next_pt.x) - A.x;
+        sf_dir_y = static_cast<int64_t>(next_pt.y) - A.y;
+    }
+
     // Idealny srodek geometryczny na osi prostej
     int32_t mid_x = (A.x + B.x) / 2;
     int32_t mid_y = (A.y + B.y) / 2;
     Point sf(mid_x, mid_y, 0);
 
-    // Pierwsza probka na prostej wjezdzajaca w strefe start/finish (zgodnie z detekcja w normal())
+    // Pierwsza probka na prostej przekraczajaca plaszczyzne start/finish
     std::size_t best_k = best_start % N;
+    bool found_k = false;
     for (std::size_t k = best_start; k <= best_end; ++k)
     {
-        if (ref_lap.data[k % N].inRange(sf)) {
+        Point& pt = ref_lap.data[k % N];
+        int64_t proj = (static_cast<int64_t>(pt.x) - sf.x) * sf_dir_x +
+                       (static_cast<int64_t>(pt.y) - sf.y) * sf_dir_y;
+        if (proj >= 0 && pt.inRange(sf)) {
             best_k = k % N;
+            found_k = true;
             break;
+        }
+    }
+    if (!found_k)
+    {
+        for (std::size_t k = best_start; k <= best_end; ++k)
+        {
+            if (ref_lap.data[k % N].inRange(sf)) {
+                best_k = k % N;
+                break;
+            }
         }
     }
 
@@ -204,6 +230,7 @@ void TrackSession::learning(int32_t& lat, int32_t& lon, int32_t& height, int32_t
         {
             session_state = SessionState::NORMAL;
 
+            Point close_point = curr_point;
             start_finish_point = findStartFinishPoint();
 
             std::size_t sf_idx = 0;
@@ -221,6 +248,12 @@ void TrackSession::learning(int32_t& lat, int32_t& lon, int32_t& height, int32_t
             ref_lap.size = new_size;
             curr_lap.size = 0;
             waiting_first_cross = true;
+
+            constexpr int64_t SF_GATE_RADIUS_MM = 12000;
+            constexpr int64_t SF_GATE_RADIUS_SQ = SF_GATE_RADIUS_MM * SF_GATE_RADIUS_MM;
+            is_crossing_startfinishpoint = (hypotsqrd(close_point, start_finish_point) < SF_GATE_RADIUS_SQ);
+            prev_norm_point = close_point;
+            has_prev_norm_point = true;
 
             break;
         }
@@ -243,39 +276,66 @@ void TrackSession::normal(int32_t& lat, int32_t& lon, int32_t& height, int32_t& 
 
     auto [x, y] = gpstoxy(lat, lon);
     Point curr_point(x, y, t, headMot);
-    bool curr_in_range = curr_point.inRange(start_finish_point);
+
+    constexpr int64_t SF_GATE_RADIUS_MM = 12000; // 12 m promien bramki start/meta (dla szerokich torow i wysokich predkosci)
+    constexpr int64_t SF_GATE_RADIUS_SQ = SF_GATE_RADIUS_MM * SF_GATE_RADIUS_MM;
+
+    bool in_sf_gate = hypotsqrd(curr_point, start_finish_point) < SF_GATE_RADIUS_SQ;
+    int64_t curr_sf_proj = (static_cast<int64_t>(curr_point.x) - start_finish_point.x) * sf_dir_x +
+                           (static_cast<int64_t>(curr_point.y) - start_finish_point.y) * sf_dir_y;
+    bool crossed_sf_plane = in_sf_gate &&
+                            curr_point.isSameDirection(start_finish_point) &&
+                            (curr_sf_proj >= 0);
+
+    auto computeCrossingOffsetMs = [&]() -> uint32_t {
+        if (!has_prev_norm_point || curr_point.t <= prev_norm_point.t)
+        {
+            return 0;
+        }
+        int64_t prev_sf_proj = (static_cast<int64_t>(prev_norm_point.x) - start_finish_point.x) * sf_dir_x +
+                               (static_cast<int64_t>(prev_norm_point.y) - start_finish_point.y) * sf_dir_y;
+        if (prev_sf_proj < 0 && (curr_sf_proj - prev_sf_proj) > 0)
+        {
+            uint32_t step_dt = curr_point.t - prev_norm_point.t;
+            return static_cast<uint32_t>(
+                (curr_sf_proj * static_cast<int64_t>(step_dt)) / (curr_sf_proj - prev_sf_proj)
+            );
+        }
+        return 0;
+    };
 
     if (waiting_first_cross)
     {
-        if (curr_in_range && !is_crossing_startfinishpoint)
+        if (!in_sf_gate)
         {
+            is_crossing_startfinishpoint = false;
+        }
+        else if (crossed_sf_plane && !is_crossing_startfinishpoint)
+        {
+            uint32_t dt_after_cross = computeCrossingOffsetMs();
             is_crossing_startfinishpoint = true;
             waiting_first_cross = false;
-            fastest_lap = t - start_finish_point.t;
+            uint32_t cross_t = (t > dt_after_cross) ? (t - dt_after_cross) : t;
+            fastest_lap = cross_t - start_finish_point.t;
             curr_lap.size = 0;
-            resetTimer();
-            curr_lap.push_back(Point(x, y, 0, headMot));
+            resetTimer(dt_after_cross);
+            curr_point.t = dt_after_cross;
+            prev_norm_point = curr_point;
+            has_prev_norm_point = true;
+            curr_lap.push_back(std::move(curr_point));
             return;
         }
 
         ref_lap.push_back(Point(x, y, t - start_finish_point.t, headMot));
+        prev_norm_point = curr_point;
+        has_prev_norm_point = true;
         return;
     }
 
-    if (curr_in_range && !is_crossing_startfinishpoint)
+    if (crossed_sf_plane && !is_crossing_startfinishpoint)
     {
-        #ifdef __WIN32
-
-        uint32_t lap_time = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>
-            (std::chrono::high_resolution_clock::now() - start_time).count());
-
-        #elif STM32H7A3xx
-
-        uint32_t lap_time = static_cast<uint32_t>((xTaskGetTickCount() - start_time) * portTICK_PERIOD_MS);
-        
-        #endif
-
-        
+        uint32_t dt_after_cross = computeCrossingOffsetMs();
+        uint32_t lap_time = (t > dt_after_cross) ? (t - dt_after_cross) : t;
 
         is_crossing_startfinishpoint = true;
 
@@ -289,10 +349,10 @@ void TrackSession::normal(int32_t& lat, int32_t& lon, int32_t& height, int32_t& 
 
         curr_lap.size = 0;
 
-        resetTimer();
-        curr_point.t = 0;
+        resetTimer(dt_after_cross);
+        curr_point.t = dt_after_cross;
     }
-    else if (!curr_in_range)
+    else if (!in_sf_gate)
     {
         is_crossing_startfinishpoint = false;
     }
@@ -301,20 +361,77 @@ void TrackSession::normal(int32_t& lat, int32_t& lon, int32_t& height, int32_t& 
     {
         int64_t closest_dist = INT64_MAX;
         std::size_t closest_dist_idx{};
+        bool found_same_dir = false;
 
         for (std::size_t i = 0; i < ref_lap.size; i++)
         {
+            if (!curr_point.isSameDirection(ref_lap.data[i]))
+            {
+                continue;
+            }
             int64_t dist = hypotsqrd(ref_lap.data[i], curr_point);
             if (dist < closest_dist)
             {
                 closest_dist = dist;
                 closest_dist_idx = i;
+                found_same_dir = true;
             }
         }
 
-        delta = ref_lap.data[closest_dist_idx].t - curr_point.t;
+        if (!found_same_dir)
+        {
+            for (std::size_t i = 0; i < ref_lap.size; i++)
+            {
+                int64_t dist = hypotsqrd(ref_lap.data[i], curr_point);
+                if (dist < closest_dist)
+                {
+                    closest_dist = dist;
+                    closest_dist_idx = i;
+                }
+            }
+        }
+
+        int32_t ref_t = static_cast<int32_t>(ref_lap.data[closest_dist_idx].t);
+
+        auto interpolateSegmentTime = [&](std::size_t idx_a, std::size_t idx_b) -> bool {
+            const Point& pa = ref_lap.data[idx_a];
+            const Point& pb = ref_lap.data[idx_b];
+            int64_t ux = static_cast<int64_t>(pb.x) - pa.x;
+            int64_t uy = static_cast<int64_t>(pb.y) - pa.y;
+            int64_t len_sq = ux * ux + uy * uy;
+            if (len_sq <= 0)
+            {
+                return false;
+            }
+            int64_t wx = static_cast<int64_t>(curr_point.x) - pa.x;
+            int64_t wy = static_cast<int64_t>(curr_point.y) - pa.y;
+            int64_t dot = wx * ux + wy * uy;
+            if (dot < 0 || dot > len_sq)
+            {
+                return false;
+            }
+            int64_t dt = static_cast<int64_t>(pb.t) - static_cast<int64_t>(pa.t);
+            ref_t = static_cast<int32_t>(static_cast<int64_t>(pa.t) + (dot * dt) / len_sq);
+            return true;
+        };
+
+        if (closest_dist_idx + 1 < ref_lap.size)
+        {
+            if (!interpolateSegmentTime(closest_dist_idx, closest_dist_idx + 1) && closest_dist_idx > 0)
+            {
+                interpolateSegmentTime(closest_dist_idx - 1, closest_dist_idx);
+            }
+        }
+        else if (closest_dist_idx > 0)
+        {
+            interpolateSegmentTime(closest_dist_idx - 1, closest_dist_idx);
+        }
+
+        delta = ref_t - static_cast<int32_t>(curr_point.t);
     }
 
+    prev_norm_point = curr_point;
+    has_prev_norm_point = true;
     curr_lap.push_back(std::move(curr_point));
 }
 
@@ -332,6 +449,11 @@ void TrackSession::start()
     ref_lap.size = 0;
     curr_lap.size = 0;
     moving_samples_count = 0;
+    sf_dir_x = 0;
+    sf_dir_y = 0;
+    has_prev_norm_point = false;
+    waiting_first_cross = false;
+    is_crossing_startfinishpoint = false;
 
     delta = 0;
 }

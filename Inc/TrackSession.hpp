@@ -18,6 +18,10 @@ private:
     Cords ref_lap;
     Cords curr_lap;
     Point start_finish_point;
+    int64_t sf_dir_x = 0;
+    int64_t sf_dir_y = 0;
+    Point prev_norm_point{};
+    bool has_prev_norm_point = false;
     int32_t delta;
     uint32_t fastest_lap = UINT32_MAX;
     uint32_t moving_samples_count = 0;
@@ -25,7 +29,7 @@ private:
     bool is_crossing_startfinishpoint = false;
 
     void startTimer();
-    void resetTimer();
+    void resetTimer(uint32_t offset_ms = 0);
 
     std::pair<int32_t, int32_t> gpstoxy(int32_t& lat, int32_t& lon);
 
