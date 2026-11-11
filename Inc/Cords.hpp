@@ -13,7 +13,15 @@ struct Point {
 
 int64_t hypotsqrd(Point& a, Point& b);
 
+#ifdef __WIN32
+
 constexpr std::size_t MAX_CORDS_SIZE = 43200;
+
+#elif STM32H7A3xx
+
+constexpr std::size_t MAX_CORDS_SIZE = 72000; // 10 minutes of driving at 10hz
+
+#endif
 
 struct Cords {
     std::size_t size{};

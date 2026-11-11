@@ -141,7 +141,15 @@ void TrackSession::learning(int32_t& lat, int32_t& lon, int32_t& height, int32_t
         guard_idx++;
     }
 
+    #ifdef __WIN32
+
     constexpr std::size_t READINGS_SKIP = 180 * 100; // how many reading to skip during finding loop, currently for test data
+    
+    #elif STM32H7A3xx
+
+    constexpr std::size_t READINGS_SKIP = 10 * 100; // gps module f is 10hz
+
+    #endif
 
     if (ref_lap.size > READINGS_SKIP)
     {
@@ -184,7 +192,7 @@ void TrackSession::normal(int32_t& lat, int32_t& lon, int32_t& height, int32_t& 
         uint32_t t = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>
             (std::chrono::high_resolution_clock::now() - start_time).count());
         
-        #endif
+    #endif
 
     auto [x, y] = gpstoxy(lat, lon);
     Point curr_point(x, y, t);
