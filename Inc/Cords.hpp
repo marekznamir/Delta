@@ -19,7 +19,7 @@ constexpr std::size_t MAX_CORDS_SIZE = 43200;
 
 #elif STM32H7A3xx
 
-constexpr std::size_t MAX_CORDS_SIZE = 72000; // 10 minutes of driving at 10hz
+constexpr std::size_t MAX_CORDS_SIZE = 6000; // 10 minutes of driving at 10hz
 
 #endif
 

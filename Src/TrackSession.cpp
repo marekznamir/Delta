@@ -9,6 +9,13 @@
 auto start_time = std::chrono::high_resolution_clock::now();
 auto end_time = std::chrono::high_resolution_clock::now();
 
+#elif STM32H7A3xx
+
+#include "FreeRTOS.h"
+#include "task.h"
+TickType_t start_time;
+TickType_t end_time;
+
 #endif
 
 void TrackSession::startTimer()
@@ -16,6 +23,10 @@ void TrackSession::startTimer()
     #ifdef __WIN32
 
     start_time = std::chrono::high_resolution_clock::now();
+
+    #elif STM32H7A3xx
+
+    start_time = xTaskGetTickCount();
 
     #endif
 }
@@ -25,6 +36,10 @@ void TrackSession::resetTimer()
     #ifdef __WIN32
 
     start_time = std::chrono::high_resolution_clock::now();
+
+    #elif STM32H7A3xx
+
+    start_time = xTaskGetTickCount();
 
     #endif
 }
@@ -134,6 +149,11 @@ void TrackSession::learning(int32_t& lat, int32_t& lon, int32_t& height, int32_t
         uint32_t t = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>
             (std::chrono::high_resolution_clock::now() - start_time).count());
         
+        #elif STM32H7A3xx
+
+        TickType_t ticks_elapsed = xTaskGetTickCount() - start_time;    
+        uint32_t t = static_cast<uint32_t>(ticks_elapsed * portTICK_PERIOD_MS);
+
         #endif
 
         auto [x, y] = gpstoxy(lat, lon);
@@ -147,7 +167,7 @@ void TrackSession::learning(int32_t& lat, int32_t& lon, int32_t& height, int32_t
     
     #elif STM32H7A3xx
 
-    constexpr std::size_t READINGS_SKIP = 10 * 100; // gps module f is 10hz
+    constexpr std::size_t READINGS_SKIP = 10 * 20; // gps module f is 10hz
 
     #endif
 
@@ -189,9 +209,14 @@ void TrackSession::normal(int32_t& lat, int32_t& lon, int32_t& height, int32_t& 
 {
     #ifdef __WIN32
 
-        uint32_t t = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>
-            (std::chrono::high_resolution_clock::now() - start_time).count());
+    uint32_t t = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>
+        (std::chrono::high_resolution_clock::now() - start_time).count());
         
+    #elif STM32H7A3xx
+
+    TickType_t ticks_elapsed = xTaskGetTickCount() - start_time;    
+    uint32_t t = static_cast<uint32_t>(ticks_elapsed * portTICK_PERIOD_MS);
+
     #endif
 
     auto [x, y] = gpstoxy(lat, lon);
@@ -218,9 +243,17 @@ void TrackSession::normal(int32_t& lat, int32_t& lon, int32_t& height, int32_t& 
     if (curr_in_range && !is_crossing_startfinishpoint)
     {
         #ifdef __WIN32
+
         uint32_t lap_time = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>
             (std::chrono::high_resolution_clock::now() - start_time).count());
+
+        #elif STM32H7A3xx
+
+        uint32_t lap_time = static_cast<uint32_t>((xTaskGetTickCount() - start_time) * portTICK_PERIOD_MS);
+        
         #endif
+
+        
 
         is_crossing_startfinishpoint = true;
 
@@ -280,7 +313,7 @@ void TrackSession::start()
 
 void TrackSession::processData(int32_t& lat, int32_t& lon, int32_t& height, int32_t& velN, int32_t& velE, int32_t& headMot)
 {
-    constexpr int64_t VEL_LIMIT = 555; // [mm/s]
+    constexpr int64_t VEL_LIMIT = 555LL * 555LL; // [mm/s]
     if((static_cast<int64_t>(velN) * static_cast<int64_t>(velN)) + (static_cast<int64_t>(velE) * static_cast<int64_t>(velE)) < VEL_LIMIT) { return; } // below 2 km/h not analysing anything
 
     switch(session_state)
