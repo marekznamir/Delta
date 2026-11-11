@@ -427,7 +427,7 @@ void TrackSession::normal(int32_t& lat, int32_t& lon, int32_t& height, int32_t& 
             interpolateSegmentTime(closest_dist_idx - 1, closest_dist_idx);
         }
 
-        delta = ref_t - static_cast<int32_t>(curr_point.t);
+        delta = static_cast<int32_t>(curr_point.t) - ref_t;
     }
 
     prev_norm_point = curr_point;
