@@ -54,121 +54,116 @@ std::pair<int32_t, int32_t> TrackSession::gpstoxy(int32_t& lat, int32_t& lon)
     return { x, y };
 }
 
-Point TrackSession::findStartFinishPoint() // temporary ai slop, to verify
+int64_t perpendicular_distance_squared(Point& p0, Point& p1, Point& p2)
 {
-    if (ref_lap.size < 2) {
+    int64_t dx = (static_cast<int64_t>(p2.x) - p1.x) / 100; // [dm] 
+    int64_t dy = (static_cast<int64_t>(p2.y) - p1.y) / 100; // [dm]
+    int64_t den = dx * dx + dy * dy;
+    if (den == 0)
+    {
+        return hypotsqrd(p0, p1);
+    }
+    int64_t px = (static_cast<int64_t>(p0.x) - p1.x) / 100; // [dm]
+    int64_t py = (static_cast<int64_t>(p0.y) - p1.y) / 100; // [dm]
+    int64_t num = dy * px - dx * py;
+    return ((num * num) / den) * 10000; // [mm^2]
+}
+
+Cords DouglasPeucker(Point* data, std::size_t size, int64_t eps_squared)
+{
+    if(size <= 2)
+    {
+        return Cords{ size, data };
+    }
+
+    std::size_t idx{};
+    int64_t d_max{};
+
+    for(std::size_t i{1}; i < size - 1; i++)
+    {
+        int64_t d = perpendicular_distance_squared(data[i], data[0], data[size - 1]);
+        if(d > d_max) 
+        {
+            d_max = d;
+            idx = i; 
+        }
+    }
+
+    if(d_max > eps_squared)
+    {
+        auto left_part = DouglasPeucker(data, idx + 1, eps_squared);
+        auto right_part = DouglasPeucker(data + idx, size - idx, eps_squared);
+
+        if(hypotsqrd(left_part.data[0], left_part.data[left_part.size - 1]) > hypotsqrd(right_part.data[0], right_part.data[right_part.size - 1]))
+        {
+            return left_part;
+        }
+        else
+        {
+            return right_part;
+        }
+    }
+    else
+    {
+        return Cords{ size, data };
+    }
+
+}
+
+Point TrackSession::findStartFinishPoint(std::size_t& p0_idx, int64_t eps)
+{
+    Point* lap_data = ref_lap.data + p0_idx;
+    std::size_t lap_size = ref_lap.size - p0_idx;
+
+    if (lap_size < 2)
+    {
         sf_dir_x = 0;
         sf_dir_y = 0;
-        return ref_lap.size > 0 ? ref_lap.data[0] : Point{0, 0, 0};
+        return lap_size > 0 ? lap_data[0] : Point{0, 0, 0};
     }
-    constexpr int64_t STEP_DIST_MM = 5000;                      // krok geometryczny [5 m] wygladzajacy szum GPS
-    constexpr int64_t STEP_DIST_SQ = STEP_DIST_MM * STEP_DIST_MM;
-    constexpr int64_t TAN_INV = 8;                              // ~7 stopni tolerancji kata (1/8 = 0.125)
-    constexpr int64_t MAX_DEV_MM = 4000;                        // maks. odchylenie od osi prostej [4 m]
-    const std::size_t N = ref_lap.size;
-    std::size_t best_start = 0;
-    std::size_t best_end = 0;
-    int64_t max_len_sq = -1;
 
-    auto advanceByStep = [&](std::size_t from_idx, std::size_t limit_idx) -> std::size_t {
-        std::size_t next_idx = from_idx + 1;
-        while (next_idx < limit_idx &&
-               hypotsqrd(ref_lap.data[from_idx % N], ref_lap.data[next_idx % N]) < STEP_DIST_SQ)
-        {
-            next_idx++;
-        }
-        return next_idx;
-    };
+    std::size_t top_split_idx{};
+    std::size_t bot_split_idx{};
+    int64_t max_dist{};
 
-    // Przeszukujemy petle krokiem geometrycznym (z uwzglednieniem zawiniecia na koncu tablicy)
-    for (std::size_t i = 0; i < N; i = advanceByStep(i, N))
+    for (std::size_t i{1}; i < lap_size - 1; i++)
     {
-        const std::size_t limit = i + N;
-        std::size_t prev_j = i;
-        std::size_t j = advanceByStep(prev_j, limit);
-
-        while (j < limit)
+        int64_t dist = hypotsqrd(lap_data[0], lap_data[i]);
+        if (dist > max_dist)
         {
-            const Point& p_start = ref_lap.data[i];
-            const Point& p_prev  = ref_lap.data[prev_j % N];
-            const Point& p_curr  = ref_lap.data[j % N];
-            // Wektor calej prostej V = P_curr - P_start
-            int64_t vx = static_cast<int64_t>(p_curr.x) - p_start.x;
-            int64_t vy = static_cast<int64_t>(p_curr.y) - p_start.y;
-            // Wektor ostatniego kroku geometrycznego dv = P_curr - P_prev
-            int64_t dvx = static_cast<int64_t>(p_curr.x) - p_prev.x;
-            int64_t dvy = static_cast<int64_t>(p_curr.y) - p_prev.y;
-            int64_t dot   = dvx * vx + dvy * vy;
-            int64_t cross = dvx * vy - dvy * vx;
-            if (cross < 0) cross = -cross;
-            // Jesli kierunek lokalny odchyla sie o wiecej niz ~7 stopni od osi prostej -> koniec prostej
-            if (dot <= 0 || cross * TAN_INV > dot) {
-                break;
-            }
-            // Dodatkowe sprawdzenie odchylenia srodkowego punktu od cieciwy (odrzuca dlugie, lagodne luki)
-            const Point& p_mid_idx = ref_lap.data[((i + j) / 2) % N];
-            int64_t mx = static_cast<int64_t>(p_mid_idx.x) - p_start.x;
-            int64_t my = static_cast<int64_t>(p_mid_idx.y) - p_start.y;
-            int64_t mid_cross = mx * vy - my * vx;
-            int64_t len_sq = vx * vx + vy * vy;
-            // |mid_cross| / sqrt(len_sq) > MAX_DEV_MM  <=>  (mid_cross / MAX_DEV_MM)^2 > len_sq
-            int64_t scaled_cross = mid_cross / MAX_DEV_MM;
-            if (scaled_cross * scaled_cross > len_sq) {
-                break;
-            }
-            if (len_sq > max_len_sq) {
-                max_len_sq = len_sq;
-                best_start = i;
-                best_end = j;
-            }
-            prev_j = j;
-            j = advanceByStep(prev_j, limit);
+            max_dist = dist;
+            top_split_idx = i;
         }
     }
-    const Point& A = ref_lap.data[best_start % N];
-    const Point& B = ref_lap.data[best_end % N];
+    max_dist = 0;
+
+    // for (std::size_t i{1}; i < lap_size - 1; i++)
+    // {
+    //     int64_t dist = hypotsqrd(lap_data[top_split_idx], lap_data[i]);
+    //     if (dist > max_dist)
+    //     {
+    //         max_dist = dist;
+    //         bot_split_idx = i;
+    //     }
+    // } to do later, not that important
+
+    eps *= eps; // making eps^2
+
+    Cords first_half = DouglasPeucker(lap_data, top_split_idx + 1, eps);
+    Cords second_half = DouglasPeucker(lap_data + top_split_idx, lap_size - top_split_idx, eps);
+
+    int64_t first_len = hypotsqrd(first_half.data[0], first_half.data[first_half.size - 1]);
+    int64_t second_len = hypotsqrd(second_half.data[0], second_half.data[second_half.size - 1]);
+
+    Cords best = (first_len >= second_len) ? first_half : second_half;
+
+    Point& A = best.data[0];
+    Point& B = best.data[best.size - 1];
+
     sf_dir_x = static_cast<int64_t>(B.x) - A.x;
     sf_dir_y = static_cast<int64_t>(B.y) - A.y;
-    if (sf_dir_x == 0 && sf_dir_y == 0)
-    {
-        const Point& next_pt = ref_lap.data[(best_start + 1) % N];
-        sf_dir_x = static_cast<int64_t>(next_pt.x) - A.x;
-        sf_dir_y = static_cast<int64_t>(next_pt.y) - A.y;
-    }
 
-    // Idealny srodek geometryczny na osi prostej
-    int32_t mid_x = (A.x + B.x) / 2;
-    int32_t mid_y = (A.y + B.y) / 2;
-    Point sf(mid_x, mid_y, 0);
-
-    // Pierwsza probka na prostej przekraczajaca plaszczyzne start/finish
-    std::size_t best_k = best_start % N;
-    bool found_k = false;
-    for (std::size_t k = best_start; k <= best_end; ++k)
-    {
-        Point& pt = ref_lap.data[k % N];
-        int64_t proj = (static_cast<int64_t>(pt.x) - sf.x) * sf_dir_x +
-                       (static_cast<int64_t>(pt.y) - sf.y) * sf_dir_y;
-        if (proj >= 0 && pt.inRange(sf)) {
-            best_k = k % N;
-            found_k = true;
-            break;
-        }
-    }
-    if (!found_k)
-    {
-        for (std::size_t k = best_start; k <= best_end; ++k)
-        {
-            if (ref_lap.data[k % N].inRange(sf)) {
-                best_k = k % N;
-                break;
-            }
-        }
-    }
-
-    sf.t = ref_lap.data[best_k].t;
-    sf.headMot = ref_lap.data[best_k].headMot;
-    return sf;
+    return best.data[best.size / 2];
 }
 
 void TrackSession::findFirstPos(int32_t& lat, int32_t& lon, int32_t& height, int32_t& velN, int32_t& velE, int32_t& headMot)
@@ -231,7 +226,7 @@ void TrackSession::learning(int32_t& lat, int32_t& lon, int32_t& height, int32_t
             session_state = SessionState::NORMAL;
 
             Point close_point = curr_point;
-            start_finish_point = findStartFinishPoint();
+            start_finish_point = findStartFinishPoint(i, 3000);
 
             std::size_t sf_idx = 0;
             while (sf_idx < ref_lap.size && ref_lap.data[sf_idx].t < start_finish_point.t)

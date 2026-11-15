@@ -33,7 +33,7 @@ private:
 
     std::pair<int32_t, int32_t> gpstoxy(int32_t& lat, int32_t& lon);
 
-    Point findStartFinishPoint();
+    Point findStartFinishPoint(std::size_t& p0_idx, int64_t eps);
 
     void findFirstPos(int32_t& lat, int32_t& lon, int32_t& height, int32_t& velN, int32_t& velE, int32_t& headMot);
     void learning(int32_t& lat, int32_t& lon, int32_t& height, int32_t& velN, int32_t& velE, int32_t& headMot);
