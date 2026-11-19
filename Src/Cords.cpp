@@ -21,34 +21,27 @@ bool Point::inRange(Point& other)
 
 bool Point::isSameDirection(const Point& other) const
 {
-    constexpr int32_t FULL_CIRCLE_DEG_1E5 = 36000000;
-    constexpr int32_t HALF_CIRCLE_DEG_1E5 = 18000000;
-    constexpr int32_t MAX_HEADING_DIFF_DEG_1E5 = 4500000; // 45 deg
+    constexpr int32_t FULL_CIRCLE_DEG = 36000000; // * 10^5
+    constexpr int32_t HALF_CIRCLE_DEG = 18000000; // * 10^5
+    constexpr int32_t MAX_HEADING_DIFF_DEG = 4500000; // 45 deg * 10^5
 
     int32_t diff = headMot - other.headMot;
     if (diff < 0)
     {
         diff = -diff;
     }
-    diff %= FULL_CIRCLE_DEG_1E5;
-    if (diff > HALF_CIRCLE_DEG_1E5)
+
+    diff %= FULL_CIRCLE_DEG;
+    
+    if (diff > HALF_CIRCLE_DEG)
     {
-        diff = FULL_CIRCLE_DEG_1E5 - diff;
+        diff = FULL_CIRCLE_DEG - diff;
     }
 
-    return diff <= MAX_HEADING_DIFF_DEG_1E5;
+    return diff <= MAX_HEADING_DIFF_DEG;
 }
 
-void Cords::push_back(Point& point)
-{
-    if (size < MAX_CORDS_SIZE)
-    {
-        data[size] = point;
-        size++;
-    }
-}
-
-void Cords::push_back(Point point)
+void Cords::push_back(const Point& point)
 {
     if (size < MAX_CORDS_SIZE)
     {

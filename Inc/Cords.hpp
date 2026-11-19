@@ -1,3 +1,6 @@
+#pragma once
+
+#include <cstddef>
 #include <cstdint>
 
 struct Point {
@@ -29,6 +32,5 @@ struct Cords {
     std::size_t size{};
     Point* data;
 
-    void push_back(Point& Point);
-    void push_back(Point Point);
+    void push_back(const Point& point);
 };
