@@ -1,7 +1,8 @@
 #include "TrackSession.hpp"
 
 #include <math.h>
-#include <iostream>
+#include <algorithm>
+#include <tuple>
 
 #ifdef __WIN32
 #include <chrono>
@@ -110,16 +111,15 @@ Cords DouglasPeucker(Point* data, std::size_t size, int64_t eps_squared)
 
 }
 
-Point TrackSession::findStartFinishPoint(std::size_t& p0_idx, int64_t eps)
+std::tuple<Point, std::size_t, int32_t, int32_t, int64_t, int64_t> TrackSession::findStartFinishPoint(std::size_t& p0_idx, int64_t eps) // put out of class
 {
     Point* lap_data = ref_lap.data + p0_idx;
     std::size_t lap_size = ref_lap.size - p0_idx;
 
-    if (lap_size < 2)
+    if (lap_size < 3)
     {
-        sf_dir_x = 0;
-        sf_dir_y = 0;
-        return lap_size > 0 ? lap_data[0] : Point{0, 0, 0};
+        Point p = lap_size > 0 ? lap_data[0] : Point{0, 0, 0};
+        return { p, p0_idx, p.x, p.y, 0, 0 };
     }
 
     std::size_t top_split_idx{};
@@ -137,15 +137,21 @@ Point TrackSession::findStartFinishPoint(std::size_t& p0_idx, int64_t eps)
     }
     max_dist = 0;
 
-    // for (std::size_t i{1}; i < lap_size - 1; i++)
-    // {
-    //     int64_t dist = hypotsqrd(lap_data[top_split_idx], lap_data[i]);
-    //     if (dist > max_dist)
-    //     {
-    //         max_dist = dist;
-    //         bot_split_idx = i;
-    //     }
-    // } to do later, not that important
+    for (std::size_t i{1}; i < lap_size - 1; i++)
+    {
+        int64_t dist = hypotsqrd(lap_data[top_split_idx], lap_data[i]);
+        if (dist > max_dist)
+        {
+            max_dist = dist;
+            bot_split_idx = i;
+        }
+    }
+
+    auto mid_x = static_cast<int32_t>((static_cast<int64_t>(lap_data[top_split_idx].x) + lap_data[bot_split_idx].x) / 2);
+    auto mid_y = static_cast<int32_t>((static_cast<int64_t>(lap_data[top_split_idx].y) + lap_data[bot_split_idx].y) / 2);
+
+    std::rotate(lap_data, lap_data + bot_split_idx, lap_data + lap_size);
+    top_split_idx = (top_split_idx + lap_size - bot_split_idx) % lap_size;
 
     eps *= eps; // making eps^2
 
@@ -160,16 +166,25 @@ Point TrackSession::findStartFinishPoint(std::size_t& p0_idx, int64_t eps)
     Point& A = best.data[0];
     Point& B = best.data[best.size - 1];
 
-    sf_dir_x = static_cast<int64_t>(B.x) - A.x;
-    sf_dir_y = static_cast<int64_t>(B.y) - A.y;
+    auto dir_x = static_cast<int64_t>(B.x) - A.x;
+    auto dir_y = static_cast<int64_t>(B.y) - A.y;
 
-    return best.data[best.size / 2];
+    Point* sf_ptr = best.data + best.size / 2;
+    Point sf = *sf_ptr;
+
+    std::size_t orig_lap_sf_idx = (sf_ptr - lap_data + bot_split_idx) % lap_size;
+    std::size_t orig_ref_sf_idx = p0_idx + orig_lap_sf_idx;               
+
+    std::rotate(lap_data, sf_ptr, lap_data + lap_size);
+
+    return { sf, orig_ref_sf_idx, mid_x, mid_y, dir_x, dir_y };
 }
 
 void TrackSession::findFirstPos(int32_t& lat, int32_t& lon, int32_t& height, int32_t& velN, int32_t& velE, int32_t& headMot)
 {
     constexpr uint32_t MIN_MOVING_SAMPLES = 5;
     moving_samples_count++;
+
     if (moving_samples_count < MIN_MOVING_SAMPLES)
     {
         return;
@@ -177,9 +192,12 @@ void TrackSession::findFirstPos(int32_t& lat, int32_t& lon, int32_t& height, int
 
     lon0 = static_cast<int64_t>(lon);
     lat0 = static_cast<int64_t>(lat);
+
     double lat0_rad = (static_cast<double>(lat0) / 10000000.0) * (M_PI / 180.0);
     cos_lat0 = static_cast<int64_t>(std::cos(lat0_rad) * 1000000.0);
+
     session_state = SessionState::LEARNING;
+
     startTimer();
 }
 
@@ -210,11 +228,11 @@ void TrackSession::learning(int32_t& lat, int32_t& lon, int32_t& height, int32_t
 
     auto& curr_point = ref_lap.data[ref_lap.size - 1];
 
-    constexpr int64_t MIN_DEPARTURE_DIST_MM = 20000; // 20 m
-    constexpr int64_t MIN_DEPARTURE_DIST_SQ = MIN_DEPARTURE_DIST_MM * MIN_DEPARTURE_DIST_MM;
+    constexpr int64_t MIN_DEPARTURE_DIST_SQ = 20000 * 20000; // 20 m
 
     std::size_t search_limit = ref_lap.size - 1;
-    while (search_limit > 0 && hypotsqrd(curr_point, ref_lap.data[search_limit]) <= MIN_DEPARTURE_DIST_SQ)
+
+    while (search_limit > 0 && hypotsqrd(curr_point, ref_lap.data[search_limit]) <= MIN_DEPARTURE_DIST_SQ) // Until we pass 20 meters, we won't proceed
     {
         search_limit--;
     }
@@ -226,27 +244,36 @@ void TrackSession::learning(int32_t& lat, int32_t& lon, int32_t& height, int32_t
             session_state = SessionState::NORMAL;
 
             Point close_point = curr_point;
-            start_finish_point = findStartFinishPoint(i, 3000);
+            auto t_loop_start = ref_lap.data[i].t;
+            auto t_loop_end   = curr_point.t;
+            
+            std::size_t lap_size  = ref_lap.size - i;
 
-            std::size_t sf_idx = 0;
-            while (sf_idx < ref_lap.size && ref_lap.data[sf_idx].t < start_finish_point.t)
-            {
-                sf_idx++;
-            }
+            std::size_t sf_idx;
+            std::tie(sf_point, sf_idx, map_mid_x, map_mid_y, sf_dir_x, sf_dir_y) = findStartFinishPoint(i, 3000);
 
-            std::size_t new_size = ref_lap.size - sf_idx;
-            for (std::size_t j = 0; j < new_size; j++)
+            uint32_t sf_t = sf_point.t;
+            for (std::size_t j = 0; j < lap_size; j++)
             {
-                ref_lap.data[j] = ref_lap.data[sf_idx + j];
-                ref_lap.data[j].t -= start_finish_point.t;
+                Point& temp_point = ref_lap.data[i + j];
+                if (temp_point.t >= sf_t)
+                {
+                    temp_point.t = temp_point.t - sf_t;
+                }
+                else
+                {
+                    temp_point.t = (temp_point.t - t_loop_start) + (t_loop_end - sf_t);
+                }
+                ref_lap.data[j] = temp_point;
             }
-            ref_lap.size = new_size;
+            ref_lap.size = lap_size;
+            fastest_lap  = t_loop_end - t_loop_start;
             curr_lap.size = 0;
             waiting_first_cross = true;
 
             constexpr int64_t SF_GATE_RADIUS_MM = 12000;
             constexpr int64_t SF_GATE_RADIUS_SQ = SF_GATE_RADIUS_MM * SF_GATE_RADIUS_MM;
-            is_crossing_startfinishpoint = (hypotsqrd(close_point, start_finish_point) < SF_GATE_RADIUS_SQ);
+            is_crossing_startfinishpoint = (hypotsqrd(close_point, sf_point) < SF_GATE_RADIUS_SQ);
             prev_norm_point = close_point;
             has_prev_norm_point = true;
 
@@ -275,11 +302,11 @@ void TrackSession::normal(int32_t& lat, int32_t& lon, int32_t& height, int32_t& 
     constexpr int64_t SF_GATE_RADIUS_MM = 12000; // 12 m promien bramki start/meta (dla szerokich torow i wysokich predkosci)
     constexpr int64_t SF_GATE_RADIUS_SQ = SF_GATE_RADIUS_MM * SF_GATE_RADIUS_MM;
 
-    bool in_sf_gate = hypotsqrd(curr_point, start_finish_point) < SF_GATE_RADIUS_SQ;
-    int64_t curr_sf_proj = (static_cast<int64_t>(curr_point.x) - start_finish_point.x) * sf_dir_x +
-                           (static_cast<int64_t>(curr_point.y) - start_finish_point.y) * sf_dir_y;
+    bool in_sf_gate = hypotsqrd(curr_point, sf_point) < SF_GATE_RADIUS_SQ;
+    int64_t curr_sf_proj = (static_cast<int64_t>(curr_point.x) - sf_point.x) * sf_dir_x +
+                           (static_cast<int64_t>(curr_point.y) - sf_point.y) * sf_dir_y;
     bool crossed_sf_plane = in_sf_gate &&
-                            curr_point.isSameDirection(start_finish_point) &&
+                            curr_point.isSameDirection(sf_point) &&
                             (curr_sf_proj >= 0);
 
     auto computeCrossingOffsetMs = [&]() -> uint32_t {
@@ -287,8 +314,8 @@ void TrackSession::normal(int32_t& lat, int32_t& lon, int32_t& height, int32_t& 
         {
             return 0;
         }
-        int64_t prev_sf_proj = (static_cast<int64_t>(prev_norm_point.x) - start_finish_point.x) * sf_dir_x +
-                               (static_cast<int64_t>(prev_norm_point.y) - start_finish_point.y) * sf_dir_y;
+        int64_t prev_sf_proj = (static_cast<int64_t>(prev_norm_point.x) - sf_point.x) * sf_dir_x +
+                               (static_cast<int64_t>(prev_norm_point.y) - sf_point.y) * sf_dir_y;
         if (prev_sf_proj < 0 && (curr_sf_proj - prev_sf_proj) > 0)
         {
             uint32_t step_dt = curr_point.t - prev_norm_point.t;
@@ -310,8 +337,6 @@ void TrackSession::normal(int32_t& lat, int32_t& lon, int32_t& height, int32_t& 
             uint32_t dt_after_cross = computeCrossingOffsetMs();
             is_crossing_startfinishpoint = true;
             waiting_first_cross = false;
-            uint32_t cross_t = (t > dt_after_cross) ? (t - dt_after_cross) : t;
-            fastest_lap = cross_t - start_finish_point.t;
             curr_lap.size = 0;
             resetTimer(dt_after_cross);
             curr_point.t = dt_after_cross;
@@ -321,7 +346,6 @@ void TrackSession::normal(int32_t& lat, int32_t& lon, int32_t& height, int32_t& 
             return;
         }
 
-        ref_lap.push_back(Point(x, y, t - start_finish_point.t, headMot));
         prev_norm_point = curr_point;
         has_prev_norm_point = true;
         return;

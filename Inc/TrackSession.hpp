@@ -1,5 +1,8 @@
+#pragma once
+
 #include <cstdint>
 #include <utility>
+#include <tuple>
 
 #include "Cords.hpp"
 
@@ -12,14 +15,21 @@ enum class SessionState {
 class TrackSession {
 private:
     SessionState session_state;
+
     int64_t lat0;
     int64_t lon0;
+
     int64_t cos_lat0; // * 10^6
+
     Cords ref_lap;
     Cords curr_lap;
-    Point start_finish_point;
+
+    Point sf_point;
     int64_t sf_dir_x = 0;
     int64_t sf_dir_y = 0;
+    int32_t map_mid_x;
+    int32_t map_mid_y;
+
     Point prev_norm_point{};
     bool has_prev_norm_point = false;
     int32_t delta;
@@ -33,7 +43,7 @@ private:
 
     std::pair<int32_t, int32_t> gpstoxy(int32_t& lat, int32_t& lon);
 
-    Point findStartFinishPoint(std::size_t& p0_idx, int64_t eps);
+    std::tuple<Point, std::size_t, int32_t, int32_t, int64_t, int64_t> findStartFinishPoint(std::size_t& p0_idx, int64_t eps);
 
     void findFirstPos(int32_t& lat, int32_t& lon, int32_t& height, int32_t& velN, int32_t& velE, int32_t& headMot);
     void learning(int32_t& lat, int32_t& lon, int32_t& height, int32_t& velN, int32_t& velE, int32_t& headMot);
