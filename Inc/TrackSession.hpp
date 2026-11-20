@@ -6,6 +6,9 @@
 
 #include "Cords.hpp"
 
+constexpr int64_t SF_GATE_RADIUS_MM = 12000;
+constexpr int64_t SF_GATE_RADIUS_SQ = SF_GATE_RADIUS_MM * SF_GATE_RADIUS_MM;
+
 enum class SessionState {
     NORMAL,
     LEARNING,
@@ -30,13 +33,21 @@ private:
     int32_t map_mid_x;
     int32_t map_mid_y;
 
-    Point prev_norm_point{};
-    bool has_prev_norm_point = false;
+    uint32_t moving_samples_count = 0;
+
     int32_t delta;
     uint32_t fastest_lap = UINT32_MAX;
-    uint32_t moving_samples_count = 0;
-    bool waiting_first_cross = false;
-    bool is_crossing_startfinishpoint = false;
+    
+    uint16_t lap_count = 0;
+
+    bool in_sf_gate = false;
+    bool wait_first_cross = true;
+
+    int64_t prev_sf_proj = 0;
+    uint32_t prev_t = 0;   
+    bool has_prev_sf_proj = false;
+
+    std::size_t last_ref_idx{};
 
     void startTimer();
     void resetTimer(uint32_t offset_ms = 0);
